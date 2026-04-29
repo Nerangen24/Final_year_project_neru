@@ -1,0 +1,14 @@
+venv/
+_pycache_/
+*.pyc
+*.pyo
+data/
+logs/
+results/
+streaming/results/
+outputs/*.csv
+outputs/*.json
+outputs/*.log
+trust_scores.csv
+!outputs/model.pkl
+!outputs/scaler.pkl
