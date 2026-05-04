@@ -1,3 +1,10 @@
+import json
+import os
+
+LOG_FILE = "outputs/incidents.log"
+
 def log_incident(data):
-    with open("outputs/incidents.log", "a") as f:
-        f.write(str(data) + "\n")
+    os.makedirs("outputs", exist_ok=True)
+
+    with open(LOG_FILE, "a") as f:
+        f.write(json.dumps(data) + "\n")

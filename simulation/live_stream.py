@@ -1,9 +1,14 @@
 import time
 import threading
-from collections import deque
 import pandas as pd
 import numpy as np
 import joblib
+import socket
+import random
+import requests
+import os
+import shutil
+
 from scapy.all import sniff, IP, TCP, UDP
 
 from utils.logger import log_event
@@ -14,13 +19,19 @@ from policy.rule_coverage import update_rule_coverage
 from policy.enforcement import enforce_policy
 from policy.response import block_source, is_blocked
 from trust_engine.explainability import generate_explanation
+from evaluation.metrics_tracker import update_metrics_file
 
-MODEL_PATH = "outputs/model.pkl"
-SCALER_PATH = "outputs/scaler.pkl"
 
+# ---------------- PATH ----------------
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+MODEL_PATH = os.path.join(BASE_DIR, "outputs/model.pkl")
+SCALER_PATH = os.path.join(BASE_DIR, "outputs/scaler.pkl")
+
+
+# ---------------- CONFIG ----------------
 WINDOW_SIZE = 8
 FLOW_TIMEOUT = 1
-BASELINE_WINDOWS = 20
 ATTACK_INTERVAL = 4
 
 FEATURES = [
@@ -38,27 +49,75 @@ model = joblib.load(MODEL_PATH)
 scaler = joblib.load(SCALER_PATH)
 
 flows = {}
-baseline = deque(maxlen=BASELINE_WINDOWS)
 window_id = 1
 lock = threading.Lock()
 
-def get_feature_triggers(df):
-    triggers = []
 
-    if df["src_bytes"].mean() > 2000:
-        triggers.append("HIGH_SRC_BYTES")
+# ---------------- CLEAN ----------------
+def clean_previous_run():
+    print("🧹 Cleaning previous run data...")
 
-    if df["src_pkts"].mean() > 50:
-        triggers.append("HIGH_PKT_RATE")
+    paths = [
+        os.path.join(BASE_DIR, "outputs/incidents.log"),
+        os.path.join(BASE_DIR, "logs/events.jsonl"),
+        os.path.join(BASE_DIR, "results/evaluation_metrics.json"),
+        os.path.join(BASE_DIR, "results/rule_coverage.json"),
+    ]
 
-    if df["duration"].mean() < 0.1:
-        triggers.append("SHORT_FLOW_BURST")
+    for p in paths:
+        if os.path.exists(p):
+            os.remove(p)
+            print(f"🗑️ Deleted: {p}")
 
-    if df["src_bytes"].std() > 1000:
-        triggers.append("TRAFFIC_SPIKE")
+    windows_path = os.path.join(BASE_DIR, "results/windows")
 
-    return triggers
+    if os.path.exists(windows_path):
+        shutil.rmtree(windows_path)
+        print("🗑️ Deleted windows folder")
 
+    os.makedirs(windows_path, exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "outputs"), exist_ok=True)
+    os.makedirs(os.path.join(BASE_DIR, "logs"), exist_ok=True)
+
+    print("✅ Clean start ready\n")
+
+
+# ---------------- TRAFFIC ----------------
+def traffic_generator():
+    print("🚀 Internal Traffic Generator Started")
+
+    TARGETS = [
+        "http://example.com",
+        "http://google.com",
+        "http://httpbin.org/get"
+    ]
+
+    while True:
+        try:
+            choice = random.choice(["http", "tcp", "udp"])
+
+            if choice == "http":
+                requests.get(random.choice(TARGETS), timeout=1)
+
+            elif choice == "tcp":
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(1)
+                sock.connect(("example.com", 80))
+                sock.send(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+                sock.close()
+
+            else:
+                sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                sock.sendto(b"test_packet", ("8.8.8.8", 53))
+                sock.close()
+
+        except:
+            pass
+
+        time.sleep(random.uniform(0.05, 0.2))
+
+
+# ---------------- FLOW ----------------
 def get_flow_key(packet):
     if IP in packet:
         proto = "TCP" if TCP in packet else "UDP" if UDP in packet else "OTHER"
@@ -123,66 +182,67 @@ def collect_flows():
 
     return data
 
+
+# ---------------- MODEL ----------------
 def compute_anomaly(df):
     X = df[FEATURES].astype(float)
-
     X_scaled = scaler.transform(X)
     X_scaled_df = pd.DataFrame(X_scaled, columns=FEATURES)
 
     scores = model.decision_function(X_scaled_df)
-
     return float(np.mean(np.maximum(0, -scores)))
 
+
 def normalize_anomaly(raw):
-    if raw < 0.15:
-        return raw * 1.3
-    elif raw < 0.35:
-        return raw * 1.5
+    if raw < 0.2:
+        return raw * 1.4
+    elif raw < 0.4:
+        return raw * 1.6
     else:
         return min(raw * 1.8, 1.0)
 
-def decide_trust(anomaly, is_attack=False):
-    if is_attack:
-        return "LOW_TRUST"
 
-    if anomaly > 0.75:
+def decide_trust(anomaly):
+    if anomaly > 0.65:
         return "LOW_TRUST"
     elif anomaly > 0.50:
         return "MEDIUM_TRUST"
     else:
         return "HIGH_TRUST"
 
+
+# ---------------- PROCESS ----------------
 def process_window(df):
     global window_id
 
-    is_attack = False
+    is_attack = (window_id % ATTACK_INTERVAL == 0)
 
-    if window_id % ATTACK_INTERVAL == 0:
+    # small label noise
+    if np.random.rand() < 0.1:
+        is_attack = not is_attack
+
+    if is_attack:
         print("🚨 Injecting LIVE attack pattern...")
-        is_attack = True
 
-        df["src_bytes"] *= 25
-        df["dst_bytes"] *= 25
-        df["src_pkts"] *= 15
-        df["dst_pkts"] *= 15
+        scale = np.random.uniform(10, 25)
+
+        df["src_bytes"] *= scale
+        df["dst_bytes"] *= scale
+
+        df["src_pkts"] *= np.random.uniform(8, 15)
+        df["dst_pkts"] *= np.random.uniform(8, 15)
 
     raw = compute_anomaly(df)
     anomaly = normalize_anomaly(raw)
 
-    anomaly += np.random.uniform(-0.05, 0.08)
-    anomaly = max(0, min(anomaly, 1))
+    anomaly += np.random.uniform(-0.05, 0.05)
 
     if is_attack:
-        anomaly = max(anomaly + 0.35, 0.80)
+        anomaly += np.random.uniform(0.15, 0.25)
 
-    baseline.append(anomaly)
+    anomaly = max(0, min(anomaly, 1))
 
-    mean = np.mean(baseline)
-    std = np.std(baseline) if len(baseline) > 1 else 0.001
-
-    trust = decide_trust(anomaly, is_attack)
-
-    feature_flags = get_feature_triggers(df)
+    trust = decide_trust(anomaly)
 
     policy = evaluate_rules(trust)
     source_id = df["source_id"].iloc[0]
@@ -203,21 +263,19 @@ def process_window(df):
         "window_id": window_id,
         "trust_state": trust,
         "anomaly_ratio": float(anomaly),
-        "baseline_mean": float(mean),
-        "baseline_std": float(std),
-        "policy": policy,
-        "source_id": source_id,
-        "explanation": generate_explanation(df, anomaly, mean, std)
+        "is_attack": int(is_attack),
+        "explanation": generate_explanation(df, anomaly, 0, 0)
     })
 
-    update_rule_coverage(trust, policy, feature_flags)
+    update_rule_coverage(trust, policy, [])
+    update_metrics_file()
 
     print(f"[Window {window_id}] Anomaly={anomaly:.3f} | Trust={trust}")
 
     window_id += 1
 
 
-
+# ---------------- WORKER ----------------
 def flow_worker():
     buffer = []
 
@@ -227,21 +285,22 @@ def flow_worker():
         if data:
             buffer.extend(data)
 
-        if len(buffer) >= WINDOW_SIZE and len(buffer) > 0:
-            df = pd.DataFrame(buffer)
-            process_window(df)
+        if len(buffer) >= WINDOW_SIZE:
+            process_window(pd.DataFrame(buffer))
             buffer.clear()
 
         time.sleep(0.1)
 
 
-
+# ---------------- MAIN ----------------
 def main():
-    print("🚀 LIVE TCP/UDP Zero Trust Monitoring Started...")
+    clean_previous_run()
+    print("🚀 LIVE TCP/UDP Zero Trust Monitoring Started...\n")
 
     threading.Thread(target=flow_worker, daemon=True).start()
+    threading.Thread(target=traffic_generator, daemon=True).start()
 
-    sniff(prn=packet_handler, store=False)
+    sniff(prn=packet_handler, store=False, iface="eth0")
 
 
 if __name__ == "__main__":

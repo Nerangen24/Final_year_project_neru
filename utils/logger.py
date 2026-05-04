@@ -12,6 +12,9 @@ os.makedirs(WINDOWS_DIR, exist_ok=True)
 def log_event(data):
     data["timestamp"] = datetime.utcnow().isoformat()
 
+    trust = data.get("trust_state", "HIGH_TRUST")
+    data["prediction"] = 1 if trust == "LOW_TRUST" else 0
+
     log_file = os.path.join(LOG_DIR, "events.jsonl")
 
     with open(log_file, "a") as f:
