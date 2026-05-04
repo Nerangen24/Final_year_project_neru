@@ -33,6 +33,15 @@ def log_event(data):
     trust = data.get("trust_state", "HIGH_TRUST")
     data["prediction"] = 1 if trust == "LOW_TRUST" else 0
 
+    if trust == "LOW_TRUST":
+        rule = "RATE_LIMIT_SEVERE"
+    elif trust == "MEDIUM_TRUST":
+        rule = "RATE_LIMIT_MODERATE"
+    else:
+        rule = "ALLOW"
+
+    data["rule"] = rule
+
     with open(os.path.join(LOG_DIR, "events.jsonl"), "a") as f:
         f.write(json.dumps(data) + "\n")
 
@@ -51,6 +60,10 @@ def update_coverage(data):
     trust = data.get("trust_state")
     if trust:
         coverage["trust_states"][trust] = coverage["trust_states"].get(trust, 0) + 1
+
+    rule = data.get("rule")
+    if rule:
+        coverage["rules"][rule] = coverage["rules"].get(rule, 0) + 1
 
     triggers = data.get("explanation", [])
     for t in triggers:

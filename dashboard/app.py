@@ -4,6 +4,11 @@ import pandas as pd
 import time
 import json
 import os
+import sys
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from utils.coverage_builder import build_coverage
 
 API_BASE = "http://127.0.0.1:8000/dashboard"
 ALERT_FILE = "outputs/alerts.json"
@@ -13,10 +18,10 @@ st.set_page_config(page_title="Zero Trust Dashboard", layout="wide")
 st.title("🔐 Adaptive Zero Trust Dashboard")
 
 windows_res = requests.get(f"{API_BASE}/windows")
-coverage_res = requests.get(f"{API_BASE}/coverage")
+# coverage_res = requests.get(f"{API_BASE}/coverage")
 
 windows_data = windows_res.json().get("windows", [])
-coverage_data = coverage_res.json()
+coverage_data = build_coverage()
 
 left, right = st.columns([3, 1])
 
