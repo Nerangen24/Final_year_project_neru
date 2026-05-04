@@ -20,6 +20,8 @@ from policy.enforcement import enforce_policy
 from policy.response import block_source, is_blocked
 from trust_engine.explainability import generate_explanation
 from evaluation.metrics_tracker import update_metrics_file
+from utils.coverage_builder import save as save_coverage
+save_coverage()
 
 
 # ---------------- PATH ----------------

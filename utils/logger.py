@@ -11,46 +11,49 @@ os.makedirs(WINDOWS_DIR, exist_ok=True)
 os.makedirs("results", exist_ok=True)
 
 
+def load_coverage():
+    if os.path.exists(COVERAGE_FILE):
+        with open(COVERAGE_FILE, "r") as f:
+            return json.load(f)
+    return {
+        "rules": {},
+        "trust_states": {},
+        "feature_triggers": {}
+    }
+
+
+def save_coverage(data):
+    with open(COVERAGE_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+
 def log_event(data):
     data["timestamp"] = datetime.utcnow().isoformat()
 
     trust = data.get("trust_state", "HIGH_TRUST")
     data["prediction"] = 1 if trust == "LOW_TRUST" else 0
 
-    log_file = os.path.join(LOG_DIR, "events.jsonl")
-
-    with open(log_file, "a") as f:
+    with open(os.path.join(LOG_DIR, "events.jsonl"), "a") as f:
         f.write(json.dumps(data) + "\n")
 
     window_id = data.get("window_id")
 
     if window_id is not None:
-        window_file = os.path.join(
-            WINDOWS_DIR,
-            f"window_{int(window_id):03d}.json"
-        )
-
-        with open(window_file, "w") as f:
+        with open(os.path.join(WINDOWS_DIR, f"window_{int(window_id):03d}.json"), "w") as f:
             json.dump(data, f, indent=2)
 
-    update_feature_triggers(data)
+    update_coverage(data)
 
 
-def update_feature_triggers(data):
-    if os.path.exists(COVERAGE_FILE):
-        with open(COVERAGE_FILE, "r") as f:
-            coverage = json.load(f)
-    else:
-        coverage = {
-            "rules": {},
-            "trust_states": {},
-            "feature_triggers": {}
-        }
+def update_coverage(data):
+    coverage = load_coverage()
+
+    trust = data.get("trust_state")
+    if trust:
+        coverage["trust_states"][trust] = coverage["trust_states"].get(trust, 0) + 1
 
     triggers = data.get("explanation", [])
-
     for t in triggers:
         coverage["feature_triggers"][t] = coverage["feature_triggers"].get(t, 0) + 1
 
-    with open(COVERAGE_FILE, "w") as f:
-        json.dump(coverage, f, indent=4)
+    save_coverage(coverage)
