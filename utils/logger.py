@@ -4,9 +4,11 @@ from datetime import datetime
 
 LOG_DIR = "logs"
 WINDOWS_DIR = "results/windows"
+COVERAGE_FILE = "results/rule_coverage.json"
 
 os.makedirs(LOG_DIR, exist_ok=True)
 os.makedirs(WINDOWS_DIR, exist_ok=True)
+os.makedirs("results", exist_ok=True)
 
 
 def log_event(data):
@@ -30,3 +32,25 @@ def log_event(data):
 
         with open(window_file, "w") as f:
             json.dump(data, f, indent=2)
+
+    update_feature_triggers(data)
+
+
+def update_feature_triggers(data):
+    if os.path.exists(COVERAGE_FILE):
+        with open(COVERAGE_FILE, "r") as f:
+            coverage = json.load(f)
+    else:
+        coverage = {
+            "rules": {},
+            "trust_states": {},
+            "feature_triggers": {}
+        }
+
+    triggers = data.get("explanation", [])
+
+    for t in triggers:
+        coverage["feature_triggers"][t] = coverage["feature_triggers"].get(t, 0) + 1
+
+    with open(COVERAGE_FILE, "w") as f:
+        json.dump(coverage, f, indent=4)
